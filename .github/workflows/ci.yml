@@ -23,5 +23,5 @@ jobs:
           python -m pip install -r services/${{matrix.service}}/requirements.txt
 
       - name: Run tests
-        working-directory: services/${{matrix.services}}
+        working-directory: services/${{matrix.service}}
         run: python -m pytest -v
