@@ -40,10 +40,11 @@ jobs:
           path: ${{matrix.service}}-${{matrix.python-version}}-bandit-report.html
   deploy:
     needs: run_tests
+    # if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page.url }}       
+      url: ${{ steps.deployment.outputs.page_url }}
     permissions:
       pages: write #defaults to none
       id-token: write
@@ -52,8 +53,33 @@ jobs:
         with:
           name: tasks-api-3.12-bandit-report
           path: _site 
-      - run: mw _site/tasks-api-3.12-bandit-report.html _site/index.html
-      - uses: actions/upload-pages-artifacts@v5
+          name: title-normalizer-3.12-bandit-report
+          path: _site
+      - name: Create report index
+        run: |
+        cat > _site/index.html <<'HTML'
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <title>Bandit reports</title>
+          <style>
+            body { font-family: sans-serif; margin: 2rem; }
+            iframe { width: 100%; height: 700px; border: 1px solid #ccc; }
+          </style>
+        </head>
+        <body>
+          <h1>Bandit reports</h1>
+          <h2>Tasks API</h2>
+          <iframe title="Tasks API Bandit report"
+                src="tasks-api-3.12-bandit-report.html"></iframe>
+          <h2>Title Normalizer</h2>
+          <iframe title="Title Normalizer Bandit report"
+                src="title-normalizer-3.12-bandit-report.html"></iframe>
+        </body>
+        </html>
+        HTML
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site/
       - uses: actions/deploy-pages@v5 #outputs page url
