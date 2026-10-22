@@ -38,3 +38,23 @@ jobs:
         with:
           name: ${{matrix.service}}-${{matrix.python-version}}-bandit-report
           path: ${{matrix.service}}-${{matrix.python-version}}-bandit-report.html
+  deploy:
+    needs: run_tests
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page.url }}       
+    permissions:
+      pages: write #defaults to none
+      id-tokens: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: tasks-api-3.12-bandit-report
+          path: _site 
+      - run: ls _site
+      - uses: actions/upload-pages-artifacts@v5
+        with:
+          path: _site/
+      - uses: actions/deploy-pages@v5 #outputs page url
+        id: deployment
