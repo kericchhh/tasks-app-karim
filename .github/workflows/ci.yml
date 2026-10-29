@@ -3,12 +3,11 @@ name: Test and Scan
 on:
   push:
     branches:
-      - '**'
+      - main
   pull_request:
-    types: [closed]
+    types: [opened, synchronize, closed]
     branches:
       - main
-
 
 jobs:
   run_tests:
@@ -38,30 +37,90 @@ jobs:
         with:
           name: ${{matrix.service}}-${{matrix.python-version}}-bandit-report
           path: ${{matrix.service}}-${{matrix.python-version}}-bandit-report.html
+
+  generate_api_docs:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [tasks-api, title-normalizer] # ${{matrix.service}}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/${{matrix.service}}/requirements.txt
+      - run: pip install pdoc
+      - run: pdoc app -o apidocs
+        working-directory: services/${{matrix.service}}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{matrix.service}}-api-docs
+          path: services/${{matrix.service}}/apidocs
+  docker_integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: build and start services
+        run: |
+          docker build -t title-normalizer:ci ./services/title-normalizer
+          docker build -t tasks-api:ci ./services/tasks-api
+          docker network create tasks-ci
+          docker run -d --name title-normalizer --network tasks-ci title-normalizer:ci
+          docker run -d --name tasks-api --network tasks-ci -p 5000:5000 \
+            -e NORMALIZER_URL=http://title-normalizer:5001 tasks-api:ci
+      - name : test connection
+        run: |
+          for attempt in {1..30}; do
+            if curl -fsS http://localhost:5000/health >/dev/null &&
+               docker exec tasks-api python -c 'import requests; requests.get("http://title-normalizer:5001/health", timeout=2).raise_for_status()'; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS -H 'Content-Type: application/json' \
+            -d '{"title":"  buy   milk "}' \
+            http://localhost:5000/tasks > /tmp/task-response.json
+          python3 -c 'import json; d=json.load(open("/tmp/task-response.json")); assert d["title"] == "Buy milk" and d["normalized"] is True, d'
+
   deploy:
-    needs: run_tests
+    needs: [run_tests, generate_api_docs, docker_integration]
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    permissions:
-      pages: write #defaults to none
-      id-token: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: tasks-api-3.12-bandit-report
-          path: _site 
-      - uses: actions/download-artifact@v7
+          path: _site
+      - uses: actions/download-artifact@v8
         with:
           name: title-normalizer-3.12-bandit-report
           path: _site
-      - name: Copy report index
-        run: cp index.html _site/index.html
+      - uses: actions/download-artifact@v8
+        with:
+          name: tasks-api-api-docs
+          path: _site/tasks-api-apidocs
+      - uses: actions/download-artifact@v8
+        with:
+          name: title-normalizer-api-docs
+          path: _site/title-normalizer-apidocs
+      - run: |
+          cat > _site/index.html <<'EOF'
+          <h1>Bandit reports</h1>
+          <p><a href="tasks-api-3.12-bandit-report.html">tasks-api</a></p>
+          <p><a href="title-normalizer-3.12-bandit-report.html">title-normalizer</a></p>
+          <h1>API docs</h1>
+          <p><a href="tasks-api-apidocs/index.html">tasks-api</a></p>
+          <p><a href="title-normalizer-apidocs/index.html">title-normalizer</a></p>
+          EOF
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: _site/
-      - uses: actions/deploy-pages@v5 #outputs page url
-        id: deployment
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
